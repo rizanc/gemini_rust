@@ -1,0 +1,7 @@
+/target
+/log
+/logs
+.env
+cert.crt
+cert.pem
+Cargo.lock
