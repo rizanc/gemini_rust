@@ -8,7 +8,10 @@ use std::{
     io::{self, ErrorKind},
 };
 
-use super::{gemini_core::*, models::{GeminiOrder, GeminiSettings}};
+use super::{
+    gemini_core::*,
+    models::{GeminiOrder, GeminiSettings},
+};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Order {
     pub symbol: String,
@@ -21,7 +24,8 @@ pub struct Order {
 pub async fn place_order(order_send: &GeminiOrder) -> Result<Order, Box<dyn std::error::Error>> {
     let settings = GeminiSettings::new();
     debug!("{}", serde_json::to_string_pretty(order_send)?);
-    
+    debug!("Placing Order {}|{}|{}|{}", order_send.symbol, order_send.side, order_send.price, order_send.amount);
+
     let response = post(
         settings.urls["new_order"],
         &json!({
@@ -40,7 +44,7 @@ pub async fn place_order(order_send: &GeminiOrder) -> Result<Order, Box<dyn std:
     Ok(serde_json::from_str::<Order>(&response.text().await?)?)
 }
 
-pub async fn cancel_order(order_id:&str) -> Result<Order, Box<dyn std::error::Error>> {
+pub async fn cancel_order(order_id: &str) -> Result<Order, Box<dyn std::error::Error>> {
     let settings = GeminiSettings::new();
     let response = post(
         settings.urls["cancel_order"],
