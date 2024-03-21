@@ -8,7 +8,6 @@ use crate::util::Stock;
 
 use chrono::Utc;
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde_json::{json, Value};
@@ -80,13 +79,10 @@ pub async fn gemini_l2_collection(trading_data: TradingData) -> Result<(), Box<d
         trading_data_arc.clone(),
     );
 
-    let task_executor = keys_manager(done_arc.clone(), post_orders_arc.clone());
-
     let result = tokio::select! {
         result = task_hearthbeat => result,
         result = task_market_data => result?,
         result = task_orders => result,
-        result = task_executor => result,
         result = task_place_orders => result
     };
 
@@ -137,50 +133,6 @@ fn l2_market_data(
         Ok(())
     });
     task_market_data
-}
-
-fn keys_manager(
-    done_arc: Arc<Mutex<bool>>,
-    post_orders_arc: Arc<Mutex<bool>>,
-) -> tokio::task::JoinHandle<()> {
-    let task_executor = tokio::spawn(async move {
-        loop {
-            let done = {
-                let done_lock = done_arc.lock();
-                match done_lock {
-                    Ok(lock) => *lock,
-                    Err(e) => {
-                        error!("Error acquiring done lock: {}", e);
-                        continue;
-                    }
-                }
-            };
-
-            if done {
-                break;
-            }
-
-            if event::poll(std::time::Duration::from_millis(10)).unwrap() {
-                if let Event::Key(key_event) = event::read().unwrap() {
-                    if key_event.code == KeyCode::F(1)
-                        && key_event.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        *post_orders_arc.lock().unwrap() = true;
-                    } else if key_event.code == KeyCode::Char('x')
-                        && key_event.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        *post_orders_arc.lock().unwrap() = false;
-                    } else if key_event.code == KeyCode::Char('r')
-                        && key_event.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        *(done_arc).lock().unwrap() = true;
-                        break;
-                    }
-                }
-            }
-        }
-    });
-    task_executor
 }
 
 fn orders(

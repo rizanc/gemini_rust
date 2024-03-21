@@ -1,4 +1,4 @@
-use api::gemini::{models::TradingData, orders::active_orders, process::gemini_l2_collection};
+use api::gemini::{models::TradingData, process::gemini_l2_collection};
 use dotenv::dotenv;
 use log::error;
 use tokio::time::sleep;
@@ -16,9 +16,6 @@ async fn main() {
     dotenv().ok();
 
     log4rs::init_file("log4rs.yaml", Default::default()).unwrap();
-
-    // let active_orders  = active_orders().await.expect("Could not get active orders");
-    // println!("{:?}", active_orders);
 
     loop {
         let trading_data = read_settings("settings.json").await.expect("Could not find settings.dat");

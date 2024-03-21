@@ -34,7 +34,6 @@ url = "2.5.0"
 rust_decimal = "1.34.3"
 rust_decimal_macros = "1.34.2"
 http = "1.0.0"
-crossterm = "0.27.0"
 async-tungstenite = "*"
 thiserror = "1.0.57"
 
