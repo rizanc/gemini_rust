@@ -359,12 +359,10 @@ async fn message_loop_orders(
 
                 if let Some(price) = minimum_order_price {
                     {
-                        let trade_data_read = trade_data.read().await;
-
-                        let buy_price = price
-                            - (trade_data_read.order_interval + trade_data_read.profit_spread);
-
-                        trade_data.write().await.buy_price = Some(buy_price);
+                        let order_interval = trade_data.read().await.order_interval.clone();
+                        let profit_spread = trade_data.read().await.profit_spread.clone();
+                        trade_data.write().await.buy_price =
+                            Some(price - (order_interval + profit_spread));
                     }
                 }
             }
