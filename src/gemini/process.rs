@@ -486,7 +486,6 @@ fn place_orders(
                     let order_buy_price = buy_price + dec!(.01);
 
                     if placed_orders.is_empty() {
-                        debug!("Placing Order for {} bid {}", order_buy_price, bid);
 
                         let _ = place_order(&GeminiOrder {
                             client_order_id: "".to_string(),

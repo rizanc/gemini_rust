@@ -23,6 +23,7 @@ pub struct Order {
 
 pub async fn place_order(order_send: &GeminiOrder) -> Result<Order, Box<dyn std::error::Error>> {
     let settings = GeminiSettings::new();
+    
     debug!("{}", serde_json::to_string_pretty(order_send)?);
     debug!("Placing Order {}|{}|{}|{}", order_send.symbol, order_send.side, order_send.price, order_send.amount);
 
