@@ -49,7 +49,6 @@ pub enum GeminiError {
 }
 
 pub async fn gemini_l2_collection(trading_data: TradingData) -> Result<(), Box<dyn Error>> {
-
     let trading_data_arc = Arc::new(RwLock::new(trading_data));
     let bids_arc = Arc::new(Mutex::new(BTreeMap::new()));
     let done_arc = Arc::new(Mutex::new(false));
@@ -145,8 +144,6 @@ fn keys_manager(
     post_orders_arc: Arc<Mutex<bool>>,
 ) -> tokio::task::JoinHandle<()> {
     let task_executor = tokio::spawn(async move {
-        
-
         loop {
             let done = {
                 let done_lock = done_arc.lock();
@@ -192,11 +189,12 @@ fn orders(
     trading_data_arc: Arc<RwLock<TradingData>>,
 ) -> tokio::task::JoinHandle<()> {
     let task_orders = tokio::spawn(async move {
-        
         let mut socket = match create_order_events_ws(&json!({
             "request": "/v1/order/events",
             "nonce": Utc::now().timestamp_millis().to_string()
-        })).await {
+        }))
+        .await
+        {
             Ok((socket, _)) => socket,
             Err(e) => {
                 error!("Error creating order events websocket: {}", e);
@@ -311,14 +309,12 @@ async fn message_loop_orders(
                     }
                     if order.side == "sell" {
                         //if let OrderType::Initial = order.order_type {
-                            if let Some(price) = order.price {
-                                minimum_order_price = match minimum_order_price {
-                                    Some(minimum_price) => {
-                                        Some(std::cmp::min(price, minimum_price))
-                                    }
-                                    None => Some(price),
-                                };
-                            }
+                        if let Some(price) = order.price {
+                            minimum_order_price = match minimum_order_price {
+                                Some(minimum_price) => Some(std::cmp::min(price, minimum_price)),
+                                None => Some(price),
+                            };
+                        }
                         //}
                     }
 
@@ -363,14 +359,16 @@ async fn message_loop_orders(
 
                 if let Some(price) = minimum_order_price {
                     {
-                        let order_interval = trade_data.read().await.order_interval.clone();
-                        trade_data.write().await.buy_price = Some(price - order_interval * dec!(2));
+                        let trade_data_read = trade_data.read().await;
+
+                        let buy_price = price
+                            - (trade_data_read.order_interval + trade_data_read.profit_spread);
+
+                        trade_data.write().await.buy_price = Some(buy_price);
                     }
                 }
             }
-            Err(_) => {
-                
-            }
+            Err(_) => {}
         }
     }
 }
@@ -448,7 +446,6 @@ fn place_orders(
                         found = true;
 
                         if let Some(price) = order.price {
-
                             if bid > Decimal::new(0, 0) && (bid - price) > dec!(0.05) {
                                 let tgt_price = trade_data.read().await.buy_price;
 
@@ -473,7 +470,6 @@ fn place_orders(
 
                 debug!("Found: {}", found);
                 if !found {
-
                     let buy_price = match trade_data_guard.buy_price.clone() {
                         Some(price) => price,
                         None => bid,
@@ -486,7 +482,6 @@ fn place_orders(
                     let order_buy_price = buy_price + dec!(.01);
 
                     if placed_orders.is_empty() {
-
                         let _ = place_order(&GeminiOrder {
                             client_order_id: "".to_string(),
                             symbol: trade_data_guard.symbol.clone(),
@@ -508,7 +503,6 @@ fn place_orders(
         }
     });
 }
-
 
 fn monitor_hearthbeat(
     done_arc: Arc<Mutex<bool>>,
