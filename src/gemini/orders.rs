@@ -1,4 +1,5 @@
 use chrono::Utc;
+use log::debug;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -19,7 +20,8 @@ pub struct Order {
 
 pub async fn place_order(order_send: &GeminiOrder) -> Result<Order, Box<dyn std::error::Error>> {
     let settings = GeminiSettings::new();
-    //debug!("{:?}", order_send);
+    debug!("{}", serde_json::to_string_pretty(order_send)?);
+    
     let response = post(
         settings.urls["new_order"],
         &json!({
