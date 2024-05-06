@@ -1,0 +1,11 @@
+{
+    "symbol": "solusd",
+    "top_of_swing": 146.00,
+    "swing_size": 15,
+    "buy_price": 146.01,
+    "min_size": 1.0,
+    "size": 1.0,
+    "profit_spread": 0.75,
+    "order_interval": 0.75,
+    "accumulation_multiplier": 0.98
+}

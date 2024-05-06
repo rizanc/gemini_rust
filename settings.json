@@ -1,0 +1,11 @@
+{
+    "symbol": "SOLUSD",
+    "top_of_swing": 140.00,
+    "swing_size": 20,
+    "buy_price": 160.50,
+    "min_size": 1.00,
+    "size": 1.00,
+    "profit_spread": 1.0,
+    "order_interval": 1.0,
+    "accumulation_multiplier": 0.95
+}

@@ -1,0 +1,4 @@
+    gemini_key = xyz
+    gemini_secret = abc
+    api_cert = /home/api/cert.crt
+    db_connection ="db-connection for crateDb"
