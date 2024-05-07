@@ -74,10 +74,7 @@ pub async fn gemini_market_maker(trading_data: TradingData) -> Result<()> {
         bids_arc.clone(),
     );
 
-    let task_order_rest_feed = order_rest_feed(
-        done_arc.clone(),
-        trading_data_arc.clone(),
-    );
+    let task_order_rest_feed = order_rest_feed(done_arc.clone(), trading_data_arc.clone());
 
     let task_order_websocket_feed = order_websocket_feed(
         done_arc.clone(),
@@ -230,18 +227,86 @@ fn order_rest_feed(
                     let symbol = trading_data_arc.read().await.symbol.clone();
                     let mut symbol_orders: Vec<Order> = orders
                         .into_iter()
-                        .filter(|o| o.symbol.to_lowercase() == symbol.to_lowercase() && o.side == "buy")
+                        .filter(|o| {
+                            o.symbol.to_lowercase() == symbol.to_lowercase() && o.side == "buy"
+                        })
                         .collect();
-                        
-                        symbol_orders.sort_by(|a,b| a.price.cmp(&b.price));
 
+                    symbol_orders.sort_by(|a, b| a.price.cmp(&b.price));
 
-                    // Cancel all but ONE buy order. This will take care of duplicate orders
-                    for i in 0..symbol_orders.len() -1  {
-                        debug!("Cancelling order @: {:#?}", symbol_orders.get(i).unwrap().price.unwrap());
-                        let _ = cancel_order(&symbol_orders.get(i).unwrap().order_id).await;
+                    if symbol_orders.len() > 0 {
+                        // Cancel all but ONE buy order. This will take care of duplicate orders
+                        for i in 0..symbol_orders.len() - 1 {
+                            debug!(
+                                "Cancelling order @: {:#?}",
+                                symbol_orders.get(i).unwrap().price.unwrap()
+                            );
+                            let _ = cancel_order(&symbol_orders.get(i).unwrap().order_id).await;
+                        }
+
+                        // match trading_data_arc.read().await.buy_price {
+                        //     Some(buy_price) => match symbol_orders.last().unwrap().price {
+                        //         Some(last_buy_price) => {
+                        //             if last_buy_price < buy_price {
+                        //                 let _ =
+                        //                     cancel_order(&symbol_orders.last().unwrap().order_id)
+                        //                         .await;
+                        //             }
+                        //         }
+                        //         None => {
+                        //             let _ = place_order(&GeminiOrder {
+                        //                 client_order_id: "".to_string(),
+                        //                 symbol: trading_data_arc.read().await.symbol.clone(),
+                        //                 amount: (trading_data_arc.read().await.size.clone())
+                        //                     .to_string(),
+                        //                 price: (buy_price).to_string(),
+                        //                 side: "buy".to_string(),
+                        //                 order_type: "exchange limit".to_string(),
+                        //                 options: vec![],
+                        //             })
+                        //             .await;
+                        //         }
+                        //     },
+                        //     _ => (),
+                        // }
+                    } else {
+                        debug!("No orders found");
+                        // match trading_data_arc.read().await.buy_price {
+                        //     Some(buy_price) => {
+                        //         debug!("Buy Price: {}", buy_price);
+                        //         let _ = place_order(&GeminiOrder {
+                        //             client_order_id: "".to_string(),
+                        //             symbol: trading_data_arc.read().await.symbol.clone(),
+                        //             amount: (trading_data_arc.read().await.size.clone()).to_string(),
+                        //             price: (buy_price).to_string(),
+                        //             side: "buy".to_string(),
+                        //             order_type: "exchange limit".to_string(),
+                        //             options: vec![],
+                        //         })
+                        //         .await.map_err(|e| {
+                        //             error!("{:?}", e);
+                        //         });
+                        //     },
+                        //     None => (),
+                        // }
                     }
-                    
+
+                    // trading_data_arc.read().await.buy_price = match symbol_orders.last() {
+                    //     Some(order) => order.price,
+                    //     None => None,
+                    // };
+
+                    // let _ = place_order(&GeminiOrder {
+                    //     client_order_id: "".to_string(),
+                    //     symbol: trade_data.read().await.symbol.clone(),
+                    //     amount: (trade_data.read().await.size.clone()).to_string(),
+                    //     price: (price - (order_interval + profit_spread)).to_string(),
+                    //     side: "buy".to_string(),
+                    //     order_type: "exchange limit".to_string(),
+                    //     options: vec![],
+                    // })
+                    // .await;
+
                     //debug!("{}", serde_json::to_string_pretty(&symbol_orders).unwrap());
                     sleep(Duration::from_millis(10000)).await;
                 }
@@ -299,6 +364,7 @@ fn message_loop_l2_data(
 ) -> Result<()> {
     let msg = socket.read()?;
     let text = msg.to_text()?;
+    //debug!("{}", &text);
     handle_l2_message(text.to_string(), bids, counter)?;
     *last_heart_beat_clone.lock().unwrap() = Instant::now();
     Ok(())
@@ -333,12 +399,15 @@ async fn handle_orders(
     }
 }
 
-async fn remap_orders(orders: &Vec<Order>, trade_data: &Arc<RwLock<TradingData>>, open_orders: &Arc<Mutex<HashMap<String, Order>>>) {
+async fn remap_orders(
+    orders: &Vec<Order>,
+    trade_data: &Arc<RwLock<TradingData>>,
+    open_orders: &Arc<Mutex<HashMap<String, Order>>>,
+) {
     let mut minimum_order_price: Option<Decimal> = None;
 
     for order in orders {
-        if order.symbol.to_lowercase() != trade_data.read().await.symbol.to_lowercase()
-        {
+        if order.symbol.to_lowercase() != trade_data.read().await.symbol.to_lowercase() {
             continue;
         }
 
@@ -369,9 +438,8 @@ async fn remap_orders(orders: &Vec<Order>, trade_data: &Arc<RwLock<TradingData>>
                     let _ = place_order(&GeminiOrder {
                         client_order_id: "".to_string(),
                         symbol: trade_data_guard.symbol.clone(),
-                        amount: (sum
-                            * trade_data_guard.accumulation_multiplier.clone())
-                        .to_string(),
+                        amount: (sum * trade_data_guard.accumulation_multiplier.clone())
+                            .to_string(),
                         price: (order.clone().fill.unwrap().price
                             + trade_data_guard.profit_spread.clone())
                         .to_string(),
@@ -394,8 +462,7 @@ async fn remap_orders(orders: &Vec<Order>, trade_data: &Arc<RwLock<TradingData>>
         {
             let order_interval = trade_data.read().await.order_interval.clone();
             let profit_spread = trade_data.read().await.profit_spread.clone();
-            trade_data.write().await.buy_price =
-                Some(price - (order_interval + profit_spread));
+            trade_data.write().await.buy_price = Some(price - (order_interval + profit_spread));
 
             debug!(
                 "Lowest Sell Order {} | Next Buy Order Price = {}",
@@ -668,10 +735,13 @@ fn handle_l2_message(
     bids: &Arc<Mutex<BTreeMap<Decimal, Decimal>>>,
     counter: &mut u64,
 ) -> Result<()> {
-    let value: Value =
-        serde_json::from_str(&message).map_err(|e| anyhow!("Error parsing JSON message: {}", e))?;
+    let value: Value = serde_json::from_str(&message).map_err(|e| {
+        error!("{}", &message);
+        anyhow!("Error parsing JSON message: {}", e)
+    })?;
 
     let compare = value["socket_sequence"].as_u64().unwrap();
+
     *counter = compare;
     if compare > (*counter + 1) {
         return Err(anyhow!("Counter error"));

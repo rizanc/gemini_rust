@@ -97,7 +97,7 @@ pub async fn create_order_events_ws(
     // Convert HMAC result to a hexadecimal string
     let signature_hex = hex::encode(signature);
 
-    let api_url = "wss://api.gemini.com/v1/order/events?heartbeat=false";
+    let api_url = "wss://api.gemini.com/v1/order/events";
 
     let request = Request::builder()
         .uri(api_url)
