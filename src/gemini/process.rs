@@ -445,7 +445,7 @@ async fn remap_orders(
                         .to_string(),
                         side: "sell".to_string(),
                         order_type: "exchange limit".to_string(),
-                        options: vec![],
+                        options: vec!["maker-or-cancel".to_string()],
                     })
                     .await;
                 }
