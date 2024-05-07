@@ -9,9 +9,9 @@ use sha2::Sha384;
 extern crate chrono;
 use base64::{engine::general_purpose, Engine as _};
 
+use anyhow::{Result,anyhow};
 
-
-pub async fn post(url: &str, payload: &Value) -> Result<Response, Box<dyn Error>> {
+pub async fn post(url: &str, payload: &Value) -> Result<Response> {
     let key = std::env::var("gemini_key")?;
     let secret = std::env::var("gemini_secret")?;
 
@@ -45,7 +45,7 @@ pub async fn post(url: &str, payload: &Value) -> Result<Response, Box<dyn Error>
     {
         Ok(client) => Ok(client),
         Err(e) => {
-            return Err(Box::new(std::io::Error::new(
+            return Err(anyhow!(std::io::Error::new(
                 ErrorKind::Other,
                 format!("{}", e),
             )))

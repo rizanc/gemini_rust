@@ -12,6 +12,11 @@ use super::{
     gemini_core::*,
     models::{GeminiOrder, GeminiSettings},
 };
+
+use anyhow::anyhow;
+use anyhow::Result;
+
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Order {
     pub symbol: String,
@@ -21,11 +26,31 @@ pub struct Order {
     pub executed_amount: String,
 }
 
+pub async fn get_active_orders() -> Result<Vec<crate::gemini::models::Order>>{
+
+    let response = post(
+        "https://api.gemini.com/v1/orders",
+        &json!({
+            "nonce": Utc::now().timestamp_millis().to_string(),
+            "request": "/v1/orders",
+        }),
+    )
+    .await?;
+
+    let orders = response.text().await?;
+    //dbg!(&orders);   
+
+    Ok(serde_json::from_str::<Vec<crate::gemini::models::Order>>(&orders)?)
+}
+
 pub async fn place_order(order_send: &GeminiOrder) -> Result<Order, Box<dyn std::error::Error>> {
     let settings = GeminiSettings::new();
-    
+
     debug!("{}", serde_json::to_string_pretty(order_send)?);
-    debug!("Placing Order {}|{}|{}|{}", order_send.symbol, order_send.side, order_send.price, order_send.amount);
+    debug!(
+        "Placing Order {}|{}|{}|{}",
+        order_send.symbol, order_send.side, order_send.price, order_send.amount
+    );
 
     let response = post(
         settings.urls["new_order"],

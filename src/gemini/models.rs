@@ -66,6 +66,8 @@ pub struct GeminiSettings {
 #[derive(Serialize, Deserialize, Debug, Clone,PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderType {
+    #[serde(rename = "exchange limit")]
+    ExchangeLimit,
     #[serde(rename = "subscription_ack")]
     SubscriptionAck,
     Heartbeat,

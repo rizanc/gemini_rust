@@ -28,7 +28,7 @@ pub struct CandleUpdate {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Heartbeat {
-    timestamp: i64,
+    timestamp: Option<i64>,
     timestampms: Option<i64>,
     #[serde(rename = "type")]
     message_type: String,
@@ -39,7 +39,7 @@ pub fn create_v1_marketdata_ws(
     symbol: &str,
 ) -> std::result::Result<(WebSocket<MaybeTlsStream<TcpStream>>, Response), Box<dyn std::error::Error>>
 {
-    let api_url = format!("wss://api.gemini.com/v1/marketdata/{}?trades=false&bids=true&offers=false&heartbeat=false&top_of_book=true",symbol);
+    let api_url = format!("wss://api.gemini.com/v1/marketdata/{}?trades=false&bids=true&offers=false&heartbeat=true&top_of_book=true",symbol);
 
     match connect(Url::parse(&api_url)?) {
         Ok((socket, response)) => {
@@ -115,6 +115,7 @@ pub async fn create_order_events_ws(
         )
         .body(())
         .expect("Failed to build request.");
+
 
     let (socket, response) = connect(request)?;
 

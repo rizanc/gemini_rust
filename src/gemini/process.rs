@@ -2,9 +2,10 @@ use crate::cratesdb::{CratesDB, OneMinuteTable};
 use crate::gemini::gemini_websocket::{create_v1_marketdata_ws, CandleUpdate, Heartbeat};
 use anyhow::anyhow;
 use anyhow::Result;
+use serde::de;
 
 use crate::gemini::models::{GeminiOrder, OrderType};
-use crate::gemini::orders::{cancel_order, place_order};
+use crate::gemini::orders::{cancel_order, get_active_orders, place_order};
 use crate::util::Stock;
 
 use chrono::Utc;
@@ -66,14 +67,19 @@ pub async fn gemini_market_maker(trading_data: TradingData) -> Result<()> {
         trading_data_arc.clone(),
     );
 
-    let task_market_data = l2_market_data(
+    let task_bids_websocket_feed = bids_websocket_feed(
         trading_data_arc.read().await.symbol.clone(),
         done_arc.clone(),
         last_heart_beat_arc.clone(),
         bids_arc.clone(),
     );
 
-    let task_orders = orders(
+    let task_order_rest_feed = order_rest_feed(
+        done_arc.clone(),
+        trading_data_arc.clone(),
+    );
+
+    let task_order_websocket_feed = order_websocket_feed(
         done_arc.clone(),
         open_orders_arc.clone(),
         trading_data_arc.clone(),
@@ -81,8 +87,9 @@ pub async fn gemini_market_maker(trading_data: TradingData) -> Result<()> {
 
     match tokio::select! {
         result = task_hearthbeat => result,
-        result = task_market_data => result,
-        result = task_orders => result,
+        result = task_bids_websocket_feed => result,
+        result = task_order_websocket_feed => result,
+        result = task_order_rest_feed => result,
         result = task_place_orders => result
     } {
         Ok(_) => {
@@ -96,7 +103,7 @@ pub async fn gemini_market_maker(trading_data: TradingData) -> Result<()> {
     }
 }
 
-fn l2_market_data(
+fn bids_websocket_feed(
     symbol: String,
     done_arc: Arc<Mutex<bool>>,
     last_heart_beat_arc: Arc<Mutex<Instant>>,
@@ -142,7 +149,7 @@ fn l2_market_data(
     task_market_data
 }
 
-fn orders(
+fn order_websocket_feed(
     done_arc: Arc<Mutex<bool>>,
     open_orders_arc: Arc<Mutex<HashMap<String, Order>>>,
     trading_data_arc: Arc<RwLock<TradingData>>,
@@ -192,6 +199,57 @@ fn orders(
                     break;
                 }
             };
+        }
+    });
+    task_orders
+}
+
+fn order_rest_feed(
+    done_arc: Arc<Mutex<bool>>,
+    trading_data_arc: Arc<RwLock<TradingData>>,
+) -> tokio::task::JoinHandle<()> {
+    let task_orders = tokio::spawn(async move {
+        loop {
+            let done = {
+                let done_lock = done_arc.lock();
+                match done_lock {
+                    Ok(lock) => *lock,
+                    Err(e) => {
+                        error!("Error acquiring done lock: {}", e);
+                        continue;
+                    }
+                }
+            };
+
+            if done {
+                break;
+            }
+
+            match get_active_orders().await {
+                Ok(orders) => {
+                    let symbol = trading_data_arc.read().await.symbol.clone();
+                    let mut symbol_orders: Vec<Order> = orders
+                        .into_iter()
+                        .filter(|o| o.symbol.to_lowercase() == symbol.to_lowercase() && o.side == "buy")
+                        .collect();
+                        
+                        symbol_orders.sort_by(|a,b| a.price.cmp(&b.price));
+
+
+                    // Cancel all but ONE buy order. This will take care of duplicate orders
+                    for i in 0..symbol_orders.len() -1  {
+                        debug!("Cancelling order @: {:#?}", symbol_orders.get(i).unwrap().price.unwrap());
+                        let _ = cancel_order(&symbol_orders.get(i).unwrap().order_id).await;
+                    }
+                    
+                    //debug!("{}", serde_json::to_string_pretty(&symbol_orders).unwrap());
+                    sleep(Duration::from_millis(10000)).await;
+                }
+                Err(e) => {
+                    error!("{:?}", e);
+                    break;
+                }
+            }
         }
     });
     task_orders
@@ -268,74 +326,82 @@ async fn handle_orders(
     if let Ok(text) = msg.to_text() {
         match serde_json::from_str::<Vec<super::models::Order>>(&text.to_string()) {
             Ok(orders) => {
-                let mut minimum_order_price: Option<Decimal> = None;
-
-                for order in orders {
-                    if order.symbol.to_lowercase() != trade_data.read().await.symbol.to_lowercase()
-                    {
-                        continue;
-                    }
-
-                    if order.side == "sell" {
-                        if let Some(price) = order.price {
-                            minimum_order_price = match minimum_order_price {
-                                Some(minimum_price) => Some(std::cmp::min(price, minimum_price)),
-                                None => Some(price),
-                            };
-                        }
-                    }
-
-                    if let OrderType::Closed = order.order_type {
-                        open_orders.lock().unwrap().remove(&order.order_id);
-                    } else {
-                        if let OrderType::Fill = order.order_type {
-                            {
-                                let order_interval = trade_data.read().await.order_interval.clone();
-                                trade_data.write().await.buy_price =
-                                    Some(order.clone().fill.unwrap().price - order_interval);
-                            }
-
-                            let trade_data_guard = trade_data.read().await;
-
-                            let sum = &order.original_amount;
-
-                            if order.side == "buy" && order.remaining_amount == dec!(0) {
-                                let _ = place_order(&GeminiOrder {
-                                    client_order_id: "".to_string(),
-                                    symbol: trade_data_guard.symbol.clone(),
-                                    amount: (sum
-                                        * trade_data_guard.accumulation_multiplier.clone())
-                                    .to_string(),
-                                    price: (order.clone().fill.unwrap().price
-                                        + trade_data_guard.profit_spread.clone())
-                                    .to_string(),
-                                    side: "sell".to_string(),
-                                    order_type: "exchange limit".to_string(),
-                                    options: vec![],
-                                })
-                                .await;
-                            }
-                        }
-
-                        open_orders
-                            .lock()
-                            .unwrap()
-                            .insert(order.order_id.clone(), order);
-                    }
-                }
-
-                if let Some(price) = minimum_order_price {
-                    {
-                        let order_interval = trade_data.read().await.order_interval.clone();
-                        let profit_spread = trade_data.read().await.profit_spread.clone();
-                        trade_data.write().await.buy_price =
-                            Some(price - (order_interval + profit_spread));
-
-                        debug!("Lowest Sell Order {} | Next Buy Order Price = {}", price,price - (order_interval + profit_spread));
-                    }
-                }
+                remap_orders(&orders, &trade_data, &open_orders).await;
             }
             Err(_) => {}
+        }
+    }
+}
+
+async fn remap_orders(orders: &Vec<Order>, trade_data: &Arc<RwLock<TradingData>>, open_orders: &Arc<Mutex<HashMap<String, Order>>>) {
+    let mut minimum_order_price: Option<Decimal> = None;
+
+    for order in orders {
+        if order.symbol.to_lowercase() != trade_data.read().await.symbol.to_lowercase()
+        {
+            continue;
+        }
+
+        if order.side == "sell" {
+            if let Some(price) = order.price {
+                minimum_order_price = match minimum_order_price {
+                    Some(minimum_price) => Some(std::cmp::min(price, minimum_price)),
+                    None => Some(price),
+                };
+            }
+        }
+
+        if let OrderType::Closed = order.order_type {
+            open_orders.lock().unwrap().remove(&order.order_id);
+        } else {
+            if let OrderType::Fill = order.order_type {
+                {
+                    let order_interval = trade_data.read().await.order_interval.clone();
+                    trade_data.write().await.buy_price =
+                        Some(order.clone().fill.unwrap().price - order_interval);
+                }
+
+                let trade_data_guard = trade_data.read().await;
+
+                let sum = &order.original_amount;
+
+                if order.side == "buy" && order.remaining_amount == dec!(0) {
+                    let _ = place_order(&GeminiOrder {
+                        client_order_id: "".to_string(),
+                        symbol: trade_data_guard.symbol.clone(),
+                        amount: (sum
+                            * trade_data_guard.accumulation_multiplier.clone())
+                        .to_string(),
+                        price: (order.clone().fill.unwrap().price
+                            + trade_data_guard.profit_spread.clone())
+                        .to_string(),
+                        side: "sell".to_string(),
+                        order_type: "exchange limit".to_string(),
+                        options: vec![],
+                    })
+                    .await;
+                }
+            }
+
+            open_orders
+                .lock()
+                .unwrap()
+                .insert(order.order_id.clone(), order.clone());
+        }
+    }
+
+    if let Some(price) = minimum_order_price {
+        {
+            let order_interval = trade_data.read().await.order_interval.clone();
+            let profit_spread = trade_data.read().await.profit_spread.clone();
+            trade_data.write().await.buy_price =
+                Some(price - (order_interval + profit_spread));
+
+            debug!(
+                "Lowest Sell Order {} | Next Buy Order Price = {}",
+                price,
+                price - (order_interval + profit_spread)
+            );
         }
     }
 }
@@ -404,7 +470,7 @@ fn place_orders(
                     Err(_) => todo!(),
                 };
 
-                debug!("{}", serde_json::to_string_pretty(&open_orders).unwrap());
+                //debug!("{}", serde_json::to_string_pretty(&open_orders).unwrap());
                 for (_, order) in open_orders.iter() {
                     if order.symbol.to_lowercase() == trade_data_guard.symbol.to_lowercase()
                         && order.side == "buy"
@@ -428,6 +494,7 @@ fn place_orders(
                         }
                     }
                 }
+
                 for order_id in orders_to_cancel {
                     let _ = cancel_order(&order_id).await;
                 }
@@ -464,6 +531,8 @@ fn place_orders(
                         })
                         .await;
 
+                        debug!("Placed order at {}", order_buy_price);
+
                         placed_orders.insert(order_buy_price, true);
                     }
                 }
@@ -484,10 +553,6 @@ fn monitor_hearthbeat(
             }
             time::sleep(Duration::from_secs(10)).await;
             let last_heart_beat = *last_heart_beat_clone.lock().unwrap();
-            debug!(
-                "Seconds since last succesful message: {:?}",
-                Instant::now().duration_since(last_heart_beat)
-            );
             if Instant::now().duration_since(last_heart_beat) > Duration::from_secs(30) {
                 error!("No heartbeat in 30 seconds");
                 break;
