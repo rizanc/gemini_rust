@@ -1,12 +1,13 @@
 use crate::cratesdb::{CratesDB, OneMinuteTable};
 use crate::gemini::gemini_websocket::{create_v1_marketdata_ws, CandleUpdate, Heartbeat};
+use crate::order_tracker;
 use anyhow::anyhow;
 use anyhow::Result;
-use serde::de;
 
 use crate::gemini::models::{GeminiOrder, OrderType};
 use crate::gemini::orders::{cancel_order, get_active_orders, place_order};
 use crate::util::Stock;
+use order_tracker::{OrderTracker, TrackedOrder};
 
 use chrono::Utc;
 
@@ -435,6 +436,14 @@ async fn remap_orders(
                 let sum = &order.original_amount;
 
                 if order.side == "buy" && order.remaining_amount == dec!(0) {
+                    let mut ot = OrderTracker::<TrackedOrder>::new(&trade_data_guard.symbol);
+                    ot.load_orders_from_file();
+                    ot.add_order(TrackedOrder {
+                        price: order.price.unwrap().clone(),
+                        amount: order.original_amount.clone(),
+                    });
+                    ot.save_orders_to_file();
+
                     let _ = place_order(&GeminiOrder {
                         client_order_id: "".to_string(),
                         symbol: trade_data_guard.symbol.clone(),
@@ -448,6 +457,12 @@ async fn remap_orders(
                         options: vec!["maker-or-cancel".to_string()],
                     })
                     .await;
+                } else if order.side == "sell" && order.remaining_amount == dec!(0) {
+
+                    let mut ot = OrderTracker::<TrackedOrder>::new(&trade_data_guard.symbol);
+                    ot.load_orders_from_file();
+                    ot.remove_order();
+                    ot.save_orders_to_file();
                 }
             }
 
