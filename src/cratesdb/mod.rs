@@ -28,8 +28,11 @@ impl CratesDB {
     }
 
     fn connect() -> Result<postgres::Client, tokio_postgres::error::Error> {
+
         trace!("Connect CratesDB");
+
         let api_cert: String;
+        
         match env::var("api_cert") {
             Ok(val) => {
                 api_cert = val;
@@ -38,6 +41,7 @@ impl CratesDB {
         }
 
         let db_connection: String;
+
         match env::var("db_connection") {
             Ok(val) => {
                 db_connection = val;
@@ -47,10 +51,13 @@ impl CratesDB {
 
         let mut builder =
             SslConnector::builder(SslMethod::tls()).expect("unable to create sslconnector builder");
+            
         builder
             .set_ca_file(api_cert)
             .expect("unable to load ca.cert");
+
         builder.set_verify(SslVerifyMode::NONE);
+
         let connector = MakeTlsConnector::new(builder.build());
 
         return postgres::Client::connect(&db_connection, connector);

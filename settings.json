@@ -1,11 +1,12 @@
 {
-    "symbol": "SOLUSD",
-    "top_of_swing": 140.00,
-    "swing_size": 20,
-    "buy_price": 160.50,
-    "min_size": 1.00,
-    "size": 1.00,
-    "profit_spread": 1.0,
-    "order_interval": 1.0,
-    "accumulation_multiplier": 0.95
+    "symbol": "XRPUSD",
+    "top_of_swing": 2.00,
+    "swing_size": 2.0,
+    "buy_price": 1.75,
+    "min_size": 100,
+    "size": 100,
+    "profit_spread": 0.013,
+    "order_interval": 0.013,
+    "accumulation_multiplier": 0.9,
+    "decimals": 5
 }

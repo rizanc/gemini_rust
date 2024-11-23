@@ -18,7 +18,7 @@ async fn main() {
     log4rs::init_file("log4rs.yaml", Default::default()).unwrap();
 
     loop {
-        let trading_data = read_settings("settings.json").await.expect("Could not find settings.dat");
+        let trading_data = read_settings("settings.json").await.expect("Could not find settings.json");
 
         match gemini_market_maker(trading_data).await {
             Ok(_) => (),

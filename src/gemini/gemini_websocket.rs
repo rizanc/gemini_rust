@@ -81,6 +81,7 @@ pub async fn create_order_events_ws(
     WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     Response,
 )> {
+
     let key = std::env::var("gemini_key").unwrap();
     let secret = std::env::var("gemini_secret").unwrap();
 
@@ -90,6 +91,7 @@ pub async fn create_order_events_ws(
     // Create a SHA384 HMAC using the secret
     let mut mac =
         Hmac::<Sha384>::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+        
     mac.update(b64_payload.as_bytes());
 
     let signature = mac.finalize().into_bytes();
@@ -120,5 +122,7 @@ pub async fn create_order_events_ws(
     let (socket, response) = connect(request)?;
 
     debug!("Connected to the server {}", api_url);
+    
     Ok((socket, response))
+
 }

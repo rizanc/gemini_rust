@@ -1,7 +1,7 @@
 use crate::cratesdb::{CratesDB, OneMinuteTable};
 use crate::gemini::gemini_websocket::{create_v1_marketdata_ws, CandleUpdate, Heartbeat};
 use crate::order_tracker;
-use anyhow::anyhow;
+use anyhow::{anyhow};
 use anyhow::Result;
 
 use crate::gemini::models::{GeminiOrder, OrderType};
@@ -15,7 +15,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde_json::{json, Value};
 use std::cmp;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 
 use std::net::TcpStream;
@@ -55,18 +55,11 @@ pub async fn gemini_market_maker(trading_data: TradingData) -> Result<()> {
     let done_arc = Arc::new(Mutex::new(false));
     let post_orders_arc = Arc::new(Mutex::new(true));
     let open_orders_arc = Arc::new(Mutex::new(HashMap::new()));
+    let in_flight_orders_arc = Arc::new(Mutex::new(HashSet::new()));
     let last_heart_beat_arc = Arc::new(Mutex::new(Instant::now()));
 
     // TASKS =============================================================================
     let task_hearthbeat = monitor_hearthbeat(done_arc.clone(), last_heart_beat_arc.clone());
-
-    let task_place_orders = place_orders(
-        done_arc.clone(),
-        post_orders_arc.clone(),
-        bids_arc.clone(),
-        open_orders_arc.clone(),
-        trading_data_arc.clone(),
-    );
 
     let task_bids_websocket_feed = bids_websocket_feed(
         trading_data_arc.read().await.symbol.clone(),
@@ -75,12 +68,23 @@ pub async fn gemini_market_maker(trading_data: TradingData) -> Result<()> {
         bids_arc.clone(),
     );
 
+
     let task_order_rest_feed = order_rest_feed(done_arc.clone(), trading_data_arc.clone());
+
+    let task_place_orders = place_orders(
+        done_arc.clone(),
+        post_orders_arc.clone(),
+        bids_arc.clone(),
+        open_orders_arc.clone(),
+        in_flight_orders_arc.clone(),
+        trading_data_arc.clone(),
+    );
 
     let task_order_websocket_feed = order_websocket_feed(
         done_arc.clone(),
         open_orders_arc.clone(),
         trading_data_arc.clone(),
+        in_flight_orders_arc.clone(),
     );
 
     match tokio::select! {
@@ -99,107 +103,6 @@ pub async fn gemini_market_maker(trading_data: TradingData) -> Result<()> {
             Err(anyhow!("Error in task"))
         }
     }
-}
-
-fn bids_websocket_feed(
-    symbol: String,
-    done_arc: Arc<Mutex<bool>>,
-    last_heart_beat_arc: Arc<Mutex<Instant>>,
-    bids_arc: Arc<Mutex<BTreeMap<Decimal, Decimal>>>,
-) -> tokio::task::JoinHandle<()> {
-    let task_market_data = tokio::spawn(async move {
-        match create_v1_marketdata_ws(&symbol) {
-            Ok((mut socket, _)) => {
-                let mut counter: u64 = 0;
-                loop {
-                    let done = {
-                        let done_lock = done_arc.lock();
-                        match done_lock {
-                            Ok(lock) => *lock,
-                            Err(e) => {
-                                error!("Error acquiring done lock: {}", e);
-                                continue;
-                            }
-                        }
-                    };
-
-                    if done {
-                        break;
-                    }
-
-                    if let Err(e) = message_loop_l2_data(
-                        &mut socket,
-                        &last_heart_beat_arc,
-                        &bids_arc,
-                        &mut counter,
-                    ) {
-                        error!("{:?}", e);
-                        break;
-                    }
-                }
-            }
-            Err(e) => {
-                error!("{}", e);
-            }
-        }
-    });
-
-    task_market_data
-}
-
-fn order_websocket_feed(
-    done_arc: Arc<Mutex<bool>>,
-    open_orders_arc: Arc<Mutex<HashMap<String, Order>>>,
-    trading_data_arc: Arc<RwLock<TradingData>>,
-) -> tokio::task::JoinHandle<()> {
-    let task_orders = tokio::spawn(async move {
-        let mut socket = match create_order_events_ws(&json!({
-            "request": "/v1/order/events",
-            "nonce": Utc::now().timestamp_millis().to_string()
-        }))
-        .await
-        {
-            Ok((socket, _)) => socket,
-            Err(e) => {
-                error!("Error creating order events websocket: {}", e);
-                return;
-            }
-        };
-
-        loop {
-            let done = {
-                let done_lock = done_arc.lock();
-                match done_lock {
-                    Ok(lock) => *lock,
-                    Err(e) => {
-                        error!("Error acquiring done lock: {}", e);
-                        continue;
-                    }
-                }
-            };
-
-            if done {
-                break;
-            }
-
-            match message_loop_orders(
-                &mut socket,
-                open_orders_arc.clone(),
-                trading_data_arc.clone(),
-            )
-            .await
-            {
-                Ok(_) => {
-                    sleep(Duration::from_millis(1000)).await;
-                }
-                Err(e) => {
-                    error!("{:?}", e);
-                    break;
-                }
-            };
-        }
-    });
-    task_orders
 }
 
 fn order_rest_feed(
@@ -224,8 +127,12 @@ fn order_rest_feed(
             }
 
             match get_active_orders().await {
+
                 Ok(orders) => {
                     let symbol = trading_data_arc.read().await.symbol.clone();
+
+                    debug!("| Rest Order Feed |");
+
                     let mut symbol_orders: Vec<Order> = orders
                         .into_iter()
                         .filter(|o| {
@@ -234,8 +141,10 @@ fn order_rest_feed(
                         .collect();
 
                     symbol_orders.sort_by(|a, b| a.price.cmp(&b.price));
+                    debug!("\n\nBuy Orders\n {:?}", &symbol_orders);
 
                     if symbol_orders.len() > 0 {
+
                         // Cancel all but ONE buy order. This will take care of duplicate orders
                         for i in 0..symbol_orders.len() - 1 {
                             debug!(
@@ -272,24 +181,24 @@ fn order_rest_feed(
                         // }
                     } else {
                         debug!("No orders found");
-                        // match trading_data_arc.read().await.buy_price {
-                        //     Some(buy_price) => {
-                        //         debug!("Buy Price: {}", buy_price);
-                        //         let _ = place_order(&GeminiOrder {
-                        //             client_order_id: "".to_string(),
-                        //             symbol: trading_data_arc.read().await.symbol.clone(),
-                        //             amount: (trading_data_arc.read().await.size.clone()).to_string(),
-                        //             price: (buy_price).to_string(),
-                        //             side: "buy".to_string(),
-                        //             order_type: "exchange limit".to_string(),
-                        //             options: vec![],
-                        //         })
-                        //         .await.map_err(|e| {
-                        //             error!("{:?}", e);
-                        //         });
-                        //     },
-                        //     None => (),
-                        // }
+                        match trading_data_arc.read().await.buy_price {
+                            Some(buy_price) => {
+                                debug!("Buy Price: {}", buy_price);
+                                let _ = place_order(&GeminiOrder {
+                                    client_order_id: "".to_string(),
+                                    symbol: trading_data_arc.read().await.symbol.clone(),
+                                    amount: (trading_data_arc.read().await.size.clone()).to_string(),
+                                    price: (buy_price).to_string(),
+                                    side: "buy".to_string(),
+                                    order_type: "exchange limit".to_string(),
+                                    options: vec![],
+                                })
+                                .await.map_err(|e| {
+                                    error!("{:?}", e);
+                                });
+                            },
+                            None => (),
+                        }
                     }
 
                     // trading_data_arc.read().await.buy_price = match symbol_orders.last() {
@@ -312,13 +221,117 @@ fn order_rest_feed(
                     sleep(Duration::from_millis(10000)).await;
                 }
                 Err(e) => {
-                    error!("{:?}", e);
-                    break;
+                    error!("\n\nERROR ({:?})", e);
+                    //break;
                 }
             }
         }
     });
     task_orders
+}
+
+fn bids_websocket_feed(
+    symbol: String,
+    done_arc: Arc<Mutex<bool>>,
+    last_heart_beat_arc: Arc<Mutex<Instant>>,
+    bids_arc: Arc<Mutex<BTreeMap<Decimal, Decimal>>>,
+) -> tokio::task::JoinHandle<()> {
+    let task_market_data = tokio::spawn(async move {
+        match create_v1_marketdata_ws(&symbol) {
+            Ok((mut socket, _)) => {
+                let mut counter: u64 = 0;
+                loop {
+                    let done = {
+                        let done_lock = done_arc.lock();
+                        match done_lock {
+                            Ok(lock) => *lock,
+                            Err(e) => {
+                                error!("Error acquiring done lock: {}", e);
+                                continue;
+                            }
+                        }
+                    };
+
+                    if done {
+                        break;
+                    }
+
+                    if let Err(e) = message_loop_l2_data(
+                        &mut socket,
+                        &last_heart_beat_arc,
+                        &bids_arc,
+                        &mut counter,
+                    ) {
+                        error!("{:?}", e);
+                        //break;
+                    }
+                }
+            }
+            Err(e) => {
+                error!("{}", e);
+            }
+        }
+    });
+
+    task_market_data
+}
+
+fn order_websocket_feed(
+    done_arc: Arc<Mutex<bool>>,
+    open_orders_arc: Arc<Mutex<HashMap<String, Order>>>,
+    trading_data_arc: Arc<RwLock<TradingData>>,
+    in_flight_orders_arc:Arc<Mutex<HashSet<String>>>,
+) -> tokio::task::JoinHandle<()> {
+
+    let task_orders = tokio::spawn(async move {
+        let mut socket = match create_order_events_ws(&json!({
+            "request": "/v1/order/events",
+            "nonce": Utc::now().timestamp_millis().to_string()
+        }))
+        .await
+        {
+            Ok((socket, _)) => socket,
+            Err(e) => {
+                error!("Error creating order events websocket: {}", e);
+                return;
+            }
+        };
+
+        loop {
+
+            let done = match done_arc.lock() {
+                Ok(lock) => *lock,
+                Err(e) => {
+                    error!("Error acquiring done lock: {}", e);
+                    continue;
+                }
+            };
+
+            if done {
+                break;
+            }
+
+            match message_loop_orders(
+                &mut socket,
+                open_orders_arc.clone(),
+                trading_data_arc.clone(),
+                in_flight_orders_arc.clone(),
+            )
+            .await
+            {
+                Ok(_) => {
+                    sleep(Duration::from_millis(1000)).await;
+                }
+                Err(e) => {
+                    error!("ERROR -1 {:?}", e);
+                    break;
+                }
+            };
+        }
+    });
+
+    task_orders
+
 }
 
 pub async fn gemini_one_minute_collection(stocks: &Vec<&Stock>) -> Result<(), Box<dyn Error>> {
@@ -363,11 +376,13 @@ fn message_loop_l2_data(
     bids: &Arc<Mutex<BTreeMap<Decimal, Decimal>>>,
     counter: &mut u64,
 ) -> Result<()> {
+
     let msg = socket.read()?;
     let text = msg.to_text()?;
-    //debug!("{}", &text);
+
     handle_l2_message(text.to_string(), bids, counter)?;
     *last_heart_beat_clone.lock().unwrap() = Instant::now();
+
     Ok(())
 }
 
@@ -375,36 +390,58 @@ async fn message_loop_orders(
     socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
     open_orders: Arc<Mutex<HashMap<String, Order>>>,
     trade_data: Arc<RwLock<TradingData>>,
+    in_flight_orders_arc:Arc<Mutex<HashSet<String>>>,
 ) -> Result<()> {
+
     match socket.read() {
         Ok(msg) => {
-            handle_orders(msg, trade_data, open_orders).await;
-            Ok(())
+            match handle_order_event(msg, trade_data, open_orders,in_flight_orders_arc).await {
+                Ok(_) => Ok(()),
+                Err(_) => {
+                    Ok(())
+                }
+            }
         }
         Err(err) => Err(anyhow!("Error reading message: {}", err)),
     }
+
 }
 
-async fn handle_orders(
+async fn handle_order_event(
     msg: Message,
     trade_data: Arc<RwLock<TradingData>>,
     open_orders: Arc<Mutex<HashMap<String, Order>>>,
-) {
-    if let Ok(text) = msg.to_text() {
-        match serde_json::from_str::<Vec<super::models::Order>>(&text.to_string()) {
-            Ok(orders) => {
-                remap_orders(&orders, &trade_data, &open_orders).await;
-            }
-            Err(_) => {}
+    in_flight_orders_arc:Arc<Mutex<HashSet<String>>>,
+) -> Result<()> {
+
+    let text = msg.to_text()?;
+
+    match serde_json::from_str::<Vec<super::models::Order>>(&text.to_string()) {
+        Ok(orders) => {
+
+            let symbol = trade_data.read().await.symbol.clone();
+            let filtered_orders:Vec<&Order> = orders.iter().filter(|order|order.symbol == symbol).collect();
+
+            debug!("\n\n{symbol} ORDERS\n\n{:?}",&filtered_orders);
+
+            remap_orders(&orders, &trade_data, &open_orders, &in_flight_orders_arc).await;
+
+            Ok(())
+        }
+        Err(_) => {
+            Ok(())
         }
     }
+
 }
 
 async fn remap_orders(
     orders: &Vec<Order>,
     trade_data: &Arc<RwLock<TradingData>>,
     open_orders: &Arc<Mutex<HashMap<String, Order>>>,
+    in_flight_orders_arc:&Arc<Mutex<HashSet<String>>>
 ) {
+
     let mut minimum_order_price: Option<Decimal> = None;
 
     for order in orders {
@@ -423,19 +460,19 @@ async fn remap_orders(
 
         if let OrderType::Closed = order.order_type {
             open_orders.lock().unwrap().remove(&order.order_id);
+
+            if let Some(ref client_order_id) = order.client_order_id {
+                in_flight_orders_arc.lock().unwrap().remove(client_order_id);
+            }
+
         } else {
             if let OrderType::Fill = order.order_type {
-                {
-                    let order_interval = trade_data.read().await.order_interval.clone();
-                    trade_data.write().await.buy_price =
-                        Some(order.clone().fill.unwrap().price - order_interval);
-                }
 
                 let trade_data_guard = trade_data.read().await;
 
                 let sum = &order.original_amount;
 
-                if order.side == "buy" && order.remaining_amount == dec!(0) {
+                if order.side == "buy" && order.remaining_amount.is_some() && order.remaining_amount.unwrap() == dec!(0) {
                     let mut ot = OrderTracker::<TrackedOrder>::new(&trade_data_guard.symbol);
                     ot.load_orders_from_file();
                     ot.add_order(TrackedOrder {
@@ -447,17 +484,14 @@ async fn remap_orders(
                     let _ = place_order(&GeminiOrder {
                         client_order_id: "".to_string(),
                         symbol: trade_data_guard.symbol.clone(),
-                        amount: (sum * trade_data_guard.accumulation_multiplier.clone())
-                            .to_string(),
-                        price: (order.clone().fill.unwrap().price
-                            + trade_data_guard.profit_spread.clone())
-                        .to_string(),
+                        amount: (sum * trade_data_guard.accumulation_multiplier.clone()).to_string(),
+                        price: (order.clone().fill.unwrap().price + trade_data_guard.profit_spread.clone()).to_string(),
                         side: "sell".to_string(),
                         order_type: "exchange limit".to_string(),
                         options: vec!["maker-or-cancel".to_string()],
                     })
                     .await;
-                } else if order.side == "sell" && order.remaining_amount == dec!(0) {
+                } else if order.side == "sell" && order.remaining_amount.is_some() && order.remaining_amount.unwrap() == dec!(0) {
 
                     let mut ot = OrderTracker::<TrackedOrder>::new(&trade_data_guard.symbol);
                     ot.load_orders_from_file();
@@ -493,114 +527,98 @@ fn place_orders(
     place_orders: Arc<Mutex<bool>>,
     bids_arc: Arc<Mutex<BTreeMap<Decimal, Decimal>>>,
     open_orders_arc: Arc<Mutex<HashMap<String, Order>>>,
+    in_flight_orders_arc:Arc<Mutex<HashSet<String>>>,
     trade_data: Arc<RwLock<TradingData>>,
 ) -> tokio::task::JoinHandle<()> {
+
     return tokio::spawn(async move {
         // Sleep for the first 10 seconds to give time
         // for the order data to be downloaded from the
         // exchange
         time::sleep(Duration::from_millis(10000)).await;
 
-        let mut placed_orders: HashMap<Decimal, bool> = HashMap::new();
-
         loop {
             if *done_arc.lock().unwrap() == true {
                 break;
             }
+
             time::sleep(Duration::from_millis(5000)).await;
 
-            let monitor: bool;
             let trade_data_guard = trade_data.read().await;
-            let _guard = match place_orders.lock() {
-                Ok(f) => monitor = *f,
-                Err(_) => {
-                    debug!("Failed to acquire lock on place_orders");
+
+            let bid: Decimal;
+
+            if let Ok(ref bid_guard) = bids_arc.lock() {
+                debug!("Current Bid: {:?}", bid_guard);
+            }
+
+            match bids_arc.lock().unwrap().iter().last() {
+                Some(b) => bid = b.0.clone(),
+                None => {
+                    error!("No bids found");
                     continue;
                 }
+            }
+
+            let mut found: bool = false;
+            let mut orders_to_cancel: Vec<String> = Vec::new();
+
+            let open_orders: HashMap<String, super::models::Order> = match open_orders_arc.lock() {
+                Ok(d) => {
+                    d.iter()
+                        .filter(|(_, order)| order.symbol.eq_ignore_ascii_case(&trade_data_guard.symbol))
+                        .map(|(order_id, order)| (order_id.clone(), order.clone()))
+                        .collect()
+                }
+                Err(_) => {
+                    error!("Failed to acquire lock on open_orders_arc");
+                    HashMap::new()
+                }
             };
+            
 
-            if monitor {
-                let bid: Decimal;
-
-                if let Ok(ref bid_guard) = bids_arc.lock() {
-                    debug!("Current Bid: {:?}", bid_guard);
-                }
-
-                match bids_arc.lock().unwrap().iter().last() {
-                    Some(b) => bid = b.0.clone(),
-                    None => {
-                        error!("No bids found");
-                        continue;
+            for (_, order) in open_orders.iter() {
+                if order.symbol.to_lowercase() == trade_data_guard.symbol.to_lowercase()
+                    && order.side == "buy"
+                {
+                    if let Some(ref client_order_id) = order.client_order_id {
+                        in_flight_orders_arc.lock().unwrap().remove(client_order_id);
                     }
-                }
 
-                let mut found: bool = false;
-                let mut orders_to_cancel: Vec<String> = Vec::new();
+                    found = true;
 
-                let mut open_orders: HashMap<String, super::models::Order> = HashMap::new();
+                    if let Some(price) = order.price {
+                        let bid_delta = Decimal::new(1,trade_data_guard.decimals) * dec!(50);
+                        if bid > Decimal::new(0, 0) && (bid - price) > bid_delta{
+                            let tgt_price = trade_data.read().await.buy_price;
 
-                let _guard = match open_orders_arc.lock() {
-                    Ok(d) => {
-                        for (order_id, order) in d.iter() {
-                            if order.symbol.to_lowercase() == trade_data_guard.symbol.to_lowercase()
+                            if tgt_price.map_or(true, |tp| tp > bid || tp > price + bid_delta)
                             {
-                                open_orders.insert(order_id.clone(), order.clone());
-                            }
-                        }
-                    }
-
-                    Err(_) => todo!(),
-                };
-
-                //debug!("{}", serde_json::to_string_pretty(&open_orders).unwrap());
-                for (_, order) in open_orders.iter() {
-                    if order.symbol.to_lowercase() == trade_data_guard.symbol.to_lowercase()
-                        && order.side == "buy"
-                    {
-                        if let Some(ref price) = order.price {
-                            placed_orders.remove(price);
-                        }
-
-                        found = true;
-
-                        if let Some(price) = order.price {
-                            if bid > Decimal::new(0, 0) && (bid - price) > dec!(0.05) {
-                                let tgt_price = trade_data.read().await.buy_price;
-
-                                if tgt_price.map_or(true, |tp| tp > bid || tp > price + dec!(0.05))
-                                {
-                                    orders_to_cancel.push(order.order_id.clone());
-                                    found = false;
-                                }
+                                orders_to_cancel.push(order.order_id.clone());
                             }
                         }
                     }
                 }
+            }
 
-                for order_id in orders_to_cancel {
-                    let _ = cancel_order(&order_id).await;
-                }
-
-                match trade_data.read().await.buy_price {
-                    Some(min_price) => min_price.to_string(),
-                    None => format!("None"),
-                };
+            for order_id in orders_to_cancel {
+                let _ = cancel_order(&order_id).await;
+            }
 
                 if !found {
-                    let buy_price = match trade_data_guard.buy_price.clone() {
-                        Some(price) => price,
-                        None => bid,
-                    };
 
-                    debug!("Buy Price {} ", buy_price);
+                    let mut buy_price = trade_data_guard.buy_price.unwrap_or(bid);
+                    buy_price = cmp::min(buy_price, bid);
+                    
+                    let bid_increase = Decimal::new(1,trade_data_guard.decimals);
+                    let order_buy_price = buy_price + bid_increase;
 
-                    let buy_price = cmp::min(buy_price, bid);
-
-                    let order_buy_price = buy_price + dec!(.01);
-
-                    if placed_orders.is_empty() {
+                    debug!("Buy Price {} | Bid: {} | Order: {}", &buy_price, &bid, &order_buy_price);
+                    
+                    if in_flight_orders_arc.lock().unwrap().is_empty() {
+                        let client_order_id = Utc::now().timestamp_millis().to_string();
                         let _ = place_order(&GeminiOrder {
-                            client_order_id: "".to_string(),
+                            client_order_id: client_order_id.clone(),
                             symbol: trade_data_guard.symbol.clone(),
                             amount: trade_data_guard
                                 .size_getter(order_buy_price)
@@ -615,10 +633,12 @@ fn place_orders(
 
                         debug!("Placed order at {}", order_buy_price);
 
-                        placed_orders.insert(order_buy_price, true);
+                        in_flight_orders_arc.lock().unwrap().insert(client_order_id);
+                    } else {
+                        debug!("In Flight Orders is not empty:{:?}",&in_flight_orders_arc);
                     }
                 }
-            }
+            
         }
     });
 }

@@ -24,6 +24,7 @@ pub struct TradingData {
     // Setting this to a decimal less than one will create a smaller
     // sell order, therefore accumulation inventory.
     pub accumulation_multiplier: Decimal,
+    pub decimals: u32
 }
 
 impl TradingData {
@@ -94,7 +95,7 @@ pub struct Order {
     pub side: String,
     pub price: Option<Decimal>,
     pub original_amount: Decimal,
-    pub remaining_amount: Decimal,
+    pub remaining_amount: Option<Decimal>,
     pub fill: Option<Fill>,
 }
 

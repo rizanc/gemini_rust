@@ -38,7 +38,6 @@ pub async fn get_active_orders() -> Result<Vec<crate::gemini::models::Order>>{
     .await?;
 
     let orders = response.text().await?;
-    //dbg!(&orders);   
 
     Ok(serde_json::from_str::<Vec<crate::gemini::models::Order>>(&orders)?)
 }
@@ -47,27 +46,37 @@ pub async fn place_order(order_send: &GeminiOrder) -> Result<Order, Box<dyn std:
     let settings = GeminiSettings::new();
 
     debug!("{}", serde_json::to_string_pretty(order_send)?);
+
+    let order_data = json!({
+        "client_order_id": order_send.client_order_id,
+        "request": settings.requests["new_order"],
+        "nonce": Utc::now().timestamp_millis().to_string(),
+        "symbol":order_send.symbol,
+        "amount":order_send.amount,
+        "price":order_send.price,
+        "side":order_send.side,
+        "type":order_send.order_type,
+        "options": order_send.options // ["maker-or-cancel"]
+    });
+
     debug!(
-        "Placing Order {}|{}|{}|{}",
-        order_send.symbol, order_send.side, order_send.price, order_send.amount
+        "\n\nPlacing Order {}\n\n",
+        &order_data
     );
+
 
     let response = post(
         settings.urls["new_order"],
-        &json!({
-            "request": settings.requests["new_order"],
-            "nonce": Utc::now().timestamp_millis().to_string(),
-            "symbol":order_send.symbol,
-            "amount":order_send.amount,
-            "price":order_send.price,
-            "side":order_send.side,
-            "type":order_send.order_type,
-            "options": order_send.options // ["maker-or-cancel"]
-        }),
+        &order_data,
     )
     .await?;
 
-    Ok(serde_json::from_str::<Order>(&response.text().await?)?)
+    let result = serde_json::from_str::<Order>(&response.text().await?)?;
+
+    debug!("\n\nResponse {:?}\n\n",&result);
+
+    Ok(result)
+
 }
 
 pub async fn cancel_order(order_id: &str) -> Result<Order, Box<dyn std::error::Error>> {
