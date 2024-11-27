@@ -1,11 +1,11 @@
-use chrono::Utc;
-use log::debug;
+use chrono::{Utc};
+use log::{debug, error};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     error::Error,
-    io::{self, ErrorKind},
+    io::{self, ErrorKind}, time::Duration,
 };
 
 use super::{
@@ -24,6 +24,36 @@ pub struct Order {
     pub side: String,
     pub price: String,
     pub executed_amount: String,
+}
+
+pub async fn get_balances() -> Result<Vec<crate::gemini::models::Balance>>{
+
+    let response = match post(
+        "https://api.gemini.com/v1/balances",
+        &json!({
+            "nonce": Utc::now().timestamp_millis().to_string(),
+            "request": "/v1/balances",
+        }),
+    )
+    .await {
+        Ok(r) => {
+            r
+        } ,
+        Err(e) => {
+            error!("{:?}",e);
+            return Err(anyhow!(e));
+        },
+    };
+
+    let balances = response.text().await?;
+
+    match serde_json::from_str::<Vec<crate::gemini::models::Balance>>(&balances) {
+        Ok(parsed_balances) => Ok(parsed_balances),
+        Err(e) => {
+            error!("\nFailed to parse balances: {:?}\nRaw balances: {}", e, balances);
+            Err(anyhow!(e))
+        }
+    }
 }
 
 pub async fn get_active_orders() -> Result<Vec<crate::gemini::models::Order>>{
@@ -73,24 +103,24 @@ pub async fn place_order(order_send: &GeminiOrder) -> Result<Order, Box<dyn std:
 
     let result = serde_json::from_str::<Order>(&response.text().await?)?;
 
-    debug!("\n\nResponse {:?}\n\n",&result);
-
     Ok(result)
 
 }
 
-pub async fn cancel_order(order_id: &str) -> Result<Order, Box<dyn std::error::Error>> {
+pub async fn cancel_order(order_id: &str , client_order_id: &str) -> Result<Order, Box<dyn std::error::Error>> {
     let settings = GeminiSettings::new();
     let response = post(
         settings.urls["cancel_order"],
         &json!({
             "request": "/v1/order/cancel".to_string(),
-            "nonce": Utc::now().timestamp_millis().to_string(),
-            "order_id":order_id.to_string()
+            "nonce": client_order_id,
+            "order_id":order_id.to_string(),
+            "client_order_id":client_order_id
         }),
     )
     .await?;
 
+    debug!("{:?}",response);
     Ok(serde_json::from_str::<Order>(&response.text().await?)?)
 }
 
@@ -107,6 +137,7 @@ pub async fn active_orders() -> Result<Vec<Order>, Box<dyn Error>> {
 
     if response.status().is_success() {
         let response_body = response.text().await?;
+        debug!("{:?}",response_body);
         serde_json::from_str::<Vec<Order>>(&response_body)
             .map_err(|e| format!("Failed to parse JSON: {:?}", e).into())
     } else {

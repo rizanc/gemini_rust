@@ -2,6 +2,7 @@ use std::{error::Error, io::ErrorKind};
 
 use hex;
 use hmac::{Hmac, Mac};
+use log::debug;
 use reqwest;
 use reqwest::Response;
 use serde_json::Value;
@@ -11,9 +12,10 @@ use base64::{engine::general_purpose, Engine as _};
 
 use anyhow::{Result,anyhow};
 
-pub async fn post(url: &str, payload: &Value) -> Result<Response> {
-    let key = std::env::var("gemini_key")?;
-    let secret = std::env::var("gemini_secret")?;
+pub async fn post(url: &str, payload: &Value) -> reqwest::Result<Response> {
+    
+    let key = std::env::var("gemini_key").expect("gemini_key not available");
+    let secret = std::env::var("gemini_secret").expect("gemini_secret not available");
 
     let payload_str = payload.to_string();
     let b64_payload = general_purpose::STANDARD.encode(payload_str);
@@ -32,7 +34,7 @@ pub async fn post(url: &str, payload: &Value) -> Result<Response> {
     let client = reqwest::Client::new();
 
     // Create request
-    match client
+    client
         .post(url)
         .header("Content-Type", "text/plain")
         .header("Content-Length", "0")
@@ -42,13 +44,5 @@ pub async fn post(url: &str, payload: &Value) -> Result<Response> {
         .header("Cache-Control", "no-cache")
         .send()
         .await
-    {
-        Ok(client) => Ok(client),
-        Err(e) => {
-            return Err(anyhow!(std::io::Error::new(
-                ErrorKind::Other,
-                format!("{}", e),
-            )))
-        }
-    }
+
 }

@@ -1,61 +1,33 @@
-use std::{cmp, collections::HashMap};
+use std::collections::HashMap;
 
 
-use rust_decimal::{
-    prelude::{FromPrimitive, ToPrimitive},
-    Decimal,
-};
+use rust_decimal::Decimal;
 
+use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TradingData {
     pub symbol: String,
-    #[serde(default)]
-    pub top_of_swing: Option<Decimal>,
-    #[serde(default)]
-    pub swing_size: Option<Decimal>,
-    #[serde(default)]
-    pub buy_price: Option<Decimal>,
-    pub min_size: Decimal,
     pub size: Decimal,
-    pub profit_spread: Decimal,
     pub order_interval: Decimal,
-    // Setting this to a decimal less than one will create a smaller
-    // sell order, therefore accumulation inventory.
     pub accumulation_multiplier: Decimal,
     pub decimals: u32
 }
 
 impl TradingData {
 
-    pub fn size_getter(&self, current_price: Decimal) -> Decimal {
-        let mut size = self.size;
-        if let (Some(top_of_swing), Some(swing_size)) = (self.top_of_swing, self.swing_size) {
-            let bottom_of_swing = top_of_swing - swing_size;
+}
 
-            if let (Some(bottom_of_swing_f64), Some(swing_size_f64)) =
-                (bottom_of_swing.to_f64(), swing_size.to_f64())
-            {
-                let x_norm = 1.0
-                    - ((current_price.to_f64().unwrap_or_default() - bottom_of_swing_f64)
-                        / swing_size_f64);
+pub struct AccountData {
+    pub available:Decimal
+}
 
-
-                let a = 0.5;
-                let b = 2.079;
-
-                let mut e = a * std::f64::consts::E.powf(b * x_norm);
-                e = (e * 100.0).round() / 100.0;
-
-                size = cmp::max(
-                    self.min_size,
-                    Decimal::from_f64(e).unwrap_or_else(|| self.min_size),
-                );
-            }
+impl AccountData {
+    pub fn new() -> AccountData {
+        return AccountData {
+            available:dec!(0)
         }
-
-        size
     }
 }
 
@@ -97,6 +69,16 @@ pub struct Order {
     pub original_amount: Decimal,
     pub remaining_amount: Option<Decimal>,
     pub fill: Option<Fill>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Balance {
+    #[serde(rename = "type")]
+    pub order_type: String,
+    pub currency :String,
+    pub amount: Decimal,
+    pub available: Decimal,
+    pub availableForWithdrawal: Decimal
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

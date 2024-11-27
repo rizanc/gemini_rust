@@ -1,6 +1,6 @@
 use api::gemini::{models::TradingData, process::gemini_market_maker};
 use dotenv::dotenv;
-use log::error;
+use log::{debug, error};
 use tokio::time::sleep;
 use std::{fs, time::Duration};
 
@@ -24,8 +24,10 @@ async fn main() {
             Ok(_) => (),
             Err(e) => {
                 error!("{:?}", e);
-                sleep(Duration::from_secs(5)).await;
             }
         }
+
+        debug!("Restarting in 10 seconds");
+        sleep(Duration::from_secs(10)).await;
     }
 }
