@@ -1,12 +1,7 @@
 {
     "symbol": "XRPUSD",
-    "top_of_swing": 2.00,
-    "swing_size": 2.0,
-    "buy_price": 1.75,
-    "min_size": 100,
     "size": 100,
-    "profit_spread": 0.013,
-    "order_interval": 0.013,
-    "accumulation_multiplier": 0.9,
+    "order_interval": 0.030,
+    "accumulation_multiplier": 0.95,
     "decimals": 5
 }
