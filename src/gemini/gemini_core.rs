@@ -1,16 +1,11 @@
-use std::{error::Error, io::ErrorKind};
-
 use hex;
 use hmac::{Hmac, Mac};
-use log::debug;
 use reqwest;
 use reqwest::Response;
 use serde_json::Value;
 use sha2::Sha384;
 extern crate chrono;
 use base64::{engine::general_purpose, Engine as _};
-
-use anyhow::{Result,anyhow};
 
 pub async fn post(url: &str, payload: &Value) -> reqwest::Result<Response> {
     

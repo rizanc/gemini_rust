@@ -1,11 +1,11 @@
-use chrono::{Utc};
+use chrono::Utc;
 use log::{debug, error};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     error::Error,
-    io::{self, ErrorKind}, time::Duration,
+    io::{self, ErrorKind},
 };
 
 use super::{

@@ -589,7 +589,7 @@ async fn handle_bids_and_offers(
                     if price < rt_bid {
                         match cancel_order_if_needed(order.order_id.to_string()).await {
                             Ok(_) => {
-                                let bid_price = (rt_bid + bid_delta);
+                                let bid_price = rt_bid + bid_delta;
 
                                 place_limit_order(
                                     trade_data,

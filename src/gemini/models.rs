@@ -78,7 +78,8 @@ pub struct Balance {
     pub currency :String,
     pub amount: Decimal,
     pub available: Decimal,
-    pub availableForWithdrawal: Decimal
+    #[serde(rename = "availableForWithdrawal")]
+    pub available_for_withdrawal: Decimal
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

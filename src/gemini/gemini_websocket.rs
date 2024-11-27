@@ -2,7 +2,7 @@ use base64::engine::general_purpose;
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use http::Request;
-use log::{debug, info};
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Sha384;
