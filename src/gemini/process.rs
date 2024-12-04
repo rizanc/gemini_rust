@@ -589,11 +589,13 @@ async fn handle_bids_and_offers(
                     if price < rt_bid {
                         match cancel_order_if_needed(order.order_id.to_string()).await {
                             Ok(_) => {
-                                let bid_price = rt_bid + bid_delta;
+                                let rt_price = rt_bid + bid_delta;
+                                let bid_price = min_offer - (dec!(2) * trade_data.order_interval);
 
+                                debug!("handle_bids_and_offers:{rt_bid:?}{max_bid:?}{min_offer:?}{bid_price:?}");
                                 place_limit_order(
                                     trade_data,
-                                    bid_price,
+                                    bid_price.min(rt_price),
                                     "buy",
                                     in_flight_orders_arc,
                                 )
@@ -617,11 +619,13 @@ async fn handle_no_bids(
     trade_data: &TradingData,
     in_flight_orders_arc: &Arc<Mutex<HashSet<String>>>,
 ) {
+    
     if min_offer > dec!(0) {
         let mut next_bid = min_offer - (dec!(2.0) * trade_data.order_interval);
 
         next_bid = next_bid.min(rt_bid + bid_delta);
 
+        debug!("handle_no_bids:{rt_bid:?}{min_offer:?}{bid_delta:?}{next_bid:?}");
         place_limit_order(trade_data, next_bid, "buy", in_flight_orders_arc).await;
     }
 }
